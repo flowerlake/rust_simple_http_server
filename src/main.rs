@@ -104,15 +104,18 @@ fn match_url_path(http_header: &str) -> Option<String> {
     let mut result = regex.captures_iter(http_header);
 
     if let Some(mat) = result.next() {
-        mat.get(1).map_or(None, |m| {Some(decode_url(m.as_str()))})
+        mat.get(1).map_or(None, |m| decode_url(m.as_str()))
     } else {
         None
     }
 }
 
-fn decode_url(encoded_str: &str) -> String{
-    let decoded_str = decode(encoded_str).expect("UTF-8");
-    decoded_str
+fn decode_url(encoded_str: &str) -> Option<String> {
+    let decoded_str = decode(encoded_str);
+    match decoded_str {
+        Ok(x) => Some(x.to_string()),
+        Err(_) => {None}
+    }
 }
 
 fn create_resp(request_line: String, stream: &mut TcpStream) {
@@ -258,8 +261,9 @@ mod tests {
     }
 
     #[test]
-    fn urldecode_test(){
-        let res = decode("/HCIP-Security%20V4.0%20%E5%AE%9E%E9%AA%8C%E6%89%8B%E5%86%8C.pdf").unwrap();
+    fn urldecode_test() {
+        let res =
+            decode("/HCIP-Security%20V4.0%20%E5%AE%9E%E9%AA%8C%E6%89%8B%E5%86%8C.pdf").unwrap();
         assert_eq!(res, "/HCIP-Security V4.0 实验手册.pdf");
     }
 }
