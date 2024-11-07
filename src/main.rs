@@ -1,5 +1,5 @@
 extern crate regex;
-use std::fs;
+use std::{env, fs};
 use std::fs::{DirEntry, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -9,13 +9,21 @@ use hello::ThreadPool;
 use regex::Regex;
 
 fn main() {
-    let listener = TcpListener::bind("0.0.0.0:7878").unwrap();
+    let args: Vec<String> = env::args().collect();
+    let mut listen_addr = "";
+    if args.len() == 2 {
+        listen_addr = &args[1];
+    }else {
+        listen_addr = "0.0.0.0:7878";
+    }
+    println!("Serving HTTP on {} (http://{}/) ...", listen_addr, listen_addr);
+    let listener = TcpListener::bind(listen_addr).unwrap();
     let thread_pool = ThreadPool::new(8);
     for stream in listener.incoming() {
         let mut stream = stream.unwrap();
 
         thread_pool.execute(move || {
-            print!("Handling connection from {:?}\n", stream.peer_addr().unwrap());
+            print!("[{:?}] ", stream.peer_addr().unwrap());
             let request_header = read_stream(&stream);
             match request_header {
                 None => {}
@@ -66,13 +74,12 @@ fn match_url_path(http_header: &str) -> Option<String> {
 }
 
 fn create_resp(request_line: String, stream: &mut TcpStream) {
-    let client_addr = stream.peer_addr().unwrap();
     println!("{}", request_line);
     let path = match_url_path(&request_line);
     match path {
         None => {
             let status_line = "HTTP/1.1 404 NOT Found";
-            let contents = format!("HTTP/1.1 404 NOT Found {client_addr}");
+            let contents = format!("HTTP/1.1 404 NOT Found");
             let length = contents.len();
             let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
             stream.write(response.as_bytes()).unwrap();
