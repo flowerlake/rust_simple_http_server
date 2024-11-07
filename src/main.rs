@@ -155,9 +155,6 @@ mod tests {
         let mut new_file = File::create(new_filepath).unwrap();
         match file {
             Ok(mut x) => {
-                let status_line = "HTTP/1.1 200 OK";
-                let filename = Path::new(filepath).file_name().unwrap().to_str().unwrap();
-                let length = x.metadata().unwrap().len();
                 let mut buffer = [0u8; 1024];
                 while let Ok(size) = x.read(&mut buffer) {
                     if size == 0 {

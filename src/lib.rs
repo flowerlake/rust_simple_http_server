@@ -3,11 +3,13 @@ use std::thread;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
+#[warn(dead_code)]
 pub struct ThreadPool {
     workers: Vec<Worker>,
     sender: mpsc::Sender<Job>,
 }
 
+#[warn(dead_code)]
 struct Worker {
     id: usize,
     thread: thread::JoinHandle<()>,
