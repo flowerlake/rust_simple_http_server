@@ -1,18 +1,16 @@
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
-#[warn(dead_code)]
 pub struct ThreadPool {
-    workers: Vec<Worker>,
+    _workers: Vec<Worker>,
     sender: mpsc::Sender<Job>,
 }
 
-#[warn(dead_code)]
 struct Worker {
-    id: usize,
-    thread: thread::JoinHandle<()>,
+    _id: usize,
+    _thread: thread::JoinHandle<()>,
 }
 
 impl Worker {
@@ -22,7 +20,10 @@ impl Worker {
             job();
         });
 
-        Worker { id, thread }
+        Worker {
+            _id: id,
+            _thread: thread,
+        }
     }
 }
 
@@ -37,7 +38,10 @@ impl ThreadPool {
             workers.push(Worker::new(id, Arc::clone(&receiver)));
         }
 
-        ThreadPool { workers, sender }
+        ThreadPool {
+            _workers: workers,
+            sender,
+        }
     }
 
     pub fn execute<F>(&self, f: F)

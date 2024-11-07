@@ -1,30 +1,73 @@
 extern crate regex;
-use std::fs;
+use lazy_static::lazy_static;
+use std::collections::HashMap;
 use std::fs::{DirEntry, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
+use std::{env, fs};
+use urlencoding::decode;
 
-use hello::ThreadPool;
+use https_rs::ThreadPool;
 use regex::Regex;
 
+lazy_static! {
+    static ref EXT_CONTENT_TYPE: HashMap<&'static str, &'static str> = {
+        let mime_types: HashMap<&str, &str> = vec![
+            ("html", "text/html"),
+            ("htm", "text/html"),
+            ("xhtml", "text/html"),
+            ("css", "text/css"),
+            ("js", "text/javascript"),
+            ("jpg", "image/jpeg"),
+            ("jpeg", "image/jpeg"),
+            ("png", "image/png"),
+            ("ico", "image/x-icon"),
+            ("svg", "image/svg+xml"),
+            ("gif", "image/gif"),
+            ("avif", "image/avif"),
+            ("webp", "image/webp"),
+            ("pdf", "application/pdf"),
+            ("json", "application/json"),
+            ("mp4", "video/mp4"),
+            ("mp3", "video/mp3"),
+            ("txt", "text/plain"),
+        ]
+        .into_iter()
+        .collect();
+        mime_types
+    };
+}
+
 fn main() {
-    let listener = TcpListener::bind("0.0.0.0:7878").unwrap();
+    let args: Vec<String> = env::args().collect();
+    let listen_addr: &str;
+    if args.len() == 2 {
+        listen_addr = &args[1];
+    } else {
+        listen_addr = "0.0.0.0:7878";
+    }
+    println!(
+        "Serving HTTP on {} (http://{}/) ...",
+        listen_addr, listen_addr
+    );
+    let listener = TcpListener::bind(listen_addr).unwrap();
     let thread_pool = ThreadPool::new(8);
     for stream in listener.incoming() {
         let mut stream = stream.unwrap();
 
         thread_pool.execute(move || {
-            print!("Handling connection from {:?}\n", stream.peer_addr().unwrap());
+            print!("[{:?}] ", stream.peer_addr().unwrap());
             let request_header = read_stream(&stream);
             match request_header {
                 None => {}
-                Some(y) => { create_resp(y.clone(), &mut stream); }
+                Some(y) => {
+                    create_resp(y.clone(), &mut stream);
+                }
             }
         });
     }
 }
-
 
 fn create_list_dir_resp(current_path: String, stream: &mut TcpStream) {
     let status_line = "HTTP/1.1 200 OK";
@@ -56,23 +99,29 @@ fn create_list_dir_resp(current_path: String, stream: &mut TcpStream) {
 }
 
 fn match_url_path(http_header: &str) -> Option<String> {
-    let regex = Regex::new(r"(?m)GET ([/a-zA-Z0-9].*) HTTP/1.1").unwrap();
+    let regex = Regex::new(r"(?m)GET ([/a-zA-Z0-9%.].*) HTTP/1.1").unwrap();
     // result will be an iterator over tuples containing the start and end indices for each match in the string
     let mut result = regex.captures_iter(http_header);
 
     if let Some(mat) = result.next() {
-        mat.get(1).map_or(None, |m| Some(m.as_str().to_string()))
-    } else { None }
+        mat.get(1).map_or(None, |m| {Some(decode_url(m.as_str()))})
+    } else {
+        None
+    }
+}
+
+fn decode_url(encoded_str: &str) -> String{
+    let decoded_str = decode(encoded_str).expect("UTF-8");
+    decoded_str
 }
 
 fn create_resp(request_line: String, stream: &mut TcpStream) {
-    let client_addr = stream.peer_addr().unwrap();
     println!("{}", request_line);
     let path = match_url_path(&request_line);
     match path {
         None => {
             let status_line = "HTTP/1.1 404 NOT Found";
-            let contents = format!("HTTP/1.1 404 NOT Found {client_addr}");
+            let contents = format!("HTTP/1.1 404 NOT Found");
             let length = contents.len();
             let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
             stream.write(response.as_bytes()).unwrap();
@@ -97,9 +146,10 @@ fn create_resp(request_line: String, stream: &mut TcpStream) {
 
 fn read_stream(stream: &TcpStream) -> Option<String> {
     let buf = BufReader::new(stream);
-    let http_req: Vec<String> = buf.lines()
-        .map(|line| { line.unwrap() })
-        .take_while(|line| { !line.is_empty() })
+    let http_req: Vec<String> = buf
+        .lines()
+        .map(|line| line.unwrap())
+        .take_while(|line| !line.is_empty())
         .collect();
 
     let line: Option<&String> = http_req.iter().next();
@@ -116,13 +166,30 @@ fn get_current_directory(current_path: &String) -> Vec<DirEntry> {
 }
 
 fn download_file_response(filepath: &String, stream: &mut TcpStream) {
-    let file = File::open(Path::new(filepath));
+    let path = Path::new(filepath);
+    let file = File::open(path);
     match file {
         Ok(mut x) => {
             let status_line = "HTTP/1.1 200 OK";
-            let filename = Path::new(filepath).file_name().unwrap().to_str().unwrap();
+            let filename = path.file_name().unwrap().to_str().unwrap();
+            let file_type = path.extension();
+            let content_type;
+            match file_type {
+                Some(x) => match EXT_CONTENT_TYPE.get(x.to_str().unwrap()) {
+                    Some(x) => {
+                        content_type = *x;
+                    }
+                    None => {
+                        content_type = "application/octet-stream";
+                    }
+                },
+                None => {
+                    content_type = "application/octet-stream";
+                }
+            }
+
             let length = x.metadata().unwrap().len();
-            let response_headers = format!("{status_line}\r\nContent-type: application/octet-stream\r\nContent-Disposition: attachment; filename={filename}\r\nContent-Length: {length}\r\n\r\n");
+            let response_headers = format!("{status_line}\r\nContent-type: {content_type}\r\nContent-Disposition: attachment; filename={filename}\r\nContent-Length: {length}\r\n\r\n");
             let _ = stream.write(response_headers.as_bytes()).unwrap();
 
             let mut buffer = [0u8; 1024];
@@ -131,7 +198,7 @@ fn download_file_response(filepath: &String, stream: &mut TcpStream) {
                     break;
                 }
                 let _ = stream.write(buffer.as_ref());
-            };
+            }
         }
         Err(_) => {
             let status_line = "HTTP/1.1 404 Not Found";
@@ -143,6 +210,8 @@ fn download_file_response(filepath: &String, stream: &mut TcpStream) {
 
 #[cfg(test)]
 mod tests {
+    use urlencoding::decode;
+
     use crate::match_url_path;
     use std::fs::File;
     use std::io::{Read, Write};
@@ -161,7 +230,7 @@ mod tests {
                         break;
                     }
                     let _ = new_file.write(buffer.as_ref());
-                };
+                }
             }
             Err(_) => {
                 let status_line = "HTTP/1.1 404 Not Found";
@@ -182,7 +251,15 @@ mod tests {
         let data = match_url_path(string);
         match data {
             None => {}
-            Some(x) => { println!("{}", x); }
+            Some(x) => {
+                println!("{}", x);
+            }
         }
+    }
+
+    #[test]
+    fn urldecode_test(){
+        let res = decode("/HCIP-Security%20V4.0%20%E5%AE%9E%E9%AA%8C%E6%89%8B%E5%86%8C.pdf").unwrap();
+        assert_eq!(res, "/HCIP-Security V4.0 实验手册.pdf");
     }
 }
