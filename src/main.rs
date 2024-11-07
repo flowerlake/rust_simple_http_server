@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::{env, fs};
+use urlencoding::decode;
 
 use https_rs::ThreadPool;
 use regex::Regex;
@@ -98,15 +99,20 @@ fn create_list_dir_resp(current_path: String, stream: &mut TcpStream) {
 }
 
 fn match_url_path(http_header: &str) -> Option<String> {
-    let regex = Regex::new(r"(?m)GET ([/a-zA-Z0-9].*) HTTP/1.1").unwrap();
+    let regex = Regex::new(r"(?m)GET ([/a-zA-Z0-9%.].*) HTTP/1.1").unwrap();
     // result will be an iterator over tuples containing the start and end indices for each match in the string
     let mut result = regex.captures_iter(http_header);
 
     if let Some(mat) = result.next() {
-        mat.get(1).map_or(None, |m| Some(m.as_str().to_string()))
+        mat.get(1).map_or(None, |m| {Some(decode_url(m.as_str()))})
     } else {
         None
     }
+}
+
+fn decode_url(encoded_str: &str) -> String{
+    let decoded_str = decode(encoded_str).expect("UTF-8");
+    decoded_str
 }
 
 fn create_resp(request_line: String, stream: &mut TcpStream) {
@@ -169,17 +175,19 @@ fn download_file_response(filepath: &String, stream: &mut TcpStream) {
             let file_type = path.extension();
             let content_type;
             match file_type {
-                Some(x) => {
-                    match EXT_CONTENT_TYPE.get(x.to_str().unwrap()) {
-                        Some(x) => {content_type = *x;},
-                        None => {content_type = "application/octet-stream";},
+                Some(x) => match EXT_CONTENT_TYPE.get(x.to_str().unwrap()) {
+                    Some(x) => {
+                        content_type = *x;
+                    }
+                    None => {
+                        content_type = "application/octet-stream";
                     }
                 },
                 None => {
                     content_type = "application/octet-stream";
-                },
+                }
             }
-            
+
             let length = x.metadata().unwrap().len();
             let response_headers = format!("{status_line}\r\nContent-type: {content_type}\r\nContent-Disposition: attachment; filename={filename}\r\nContent-Length: {length}\r\n\r\n");
             let _ = stream.write(response_headers.as_bytes()).unwrap();
@@ -202,6 +210,8 @@ fn download_file_response(filepath: &String, stream: &mut TcpStream) {
 
 #[cfg(test)]
 mod tests {
+    use urlencoding::decode;
+
     use crate::match_url_path;
     use std::fs::File;
     use std::io::{Read, Write};
@@ -245,5 +255,11 @@ mod tests {
                 println!("{}", x);
             }
         }
+    }
+
+    #[test]
+    fn urldecode_test(){
+        let res = decode("/HCIP-Security%20V4.0%20%E5%AE%9E%E9%AA%8C%E6%89%8B%E5%86%8C.pdf").unwrap();
+        assert_eq!(res, "/HCIP-Security V4.0 实验手册.pdf");
     }
 }
