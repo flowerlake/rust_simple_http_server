@@ -1,22 +1,55 @@
 extern crate regex;
-use std::{env, fs};
+use lazy_static::lazy_static;
+use std::collections::HashMap;
 use std::fs::{DirEntry, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
+use std::{env, fs};
 
-use hello::ThreadPool;
+use https_rs::ThreadPool;
 use regex::Regex;
+
+lazy_static! {
+    static ref EXT_CONTENT_TYPE: HashMap<&'static str, &'static str> = {
+        let mime_types: HashMap<&str, &str> = vec![
+            ("html", "text/html"),
+            ("htm", "text/html"),
+            ("xhtml", "text/html"),
+            ("css", "text/css"),
+            ("js", "text/javascript"),
+            ("jpg", "image/jpeg"),
+            ("jpeg", "image/jpeg"),
+            ("png", "image/png"),
+            ("ico", "image/x-icon"),
+            ("svg", "image/svg+xml"),
+            ("gif", "image/gif"),
+            ("avif", "image/avif"),
+            ("webp", "image/webp"),
+            ("pdf", "application/pdf"),
+            ("json", "application/json"),
+            ("mp4", "video/mp4"),
+            ("mp3", "video/mp3"),
+            ("txt", "text/plain"),
+        ]
+        .into_iter()
+        .collect();
+        mime_types
+    };
+}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let mut listen_addr = "";
+    let listen_addr: &str;
     if args.len() == 2 {
         listen_addr = &args[1];
-    }else {
+    } else {
         listen_addr = "0.0.0.0:7878";
     }
-    println!("Serving HTTP on {} (http://{}/) ...", listen_addr, listen_addr);
+    println!(
+        "Serving HTTP on {} (http://{}/) ...",
+        listen_addr, listen_addr
+    );
     let listener = TcpListener::bind(listen_addr).unwrap();
     let thread_pool = ThreadPool::new(8);
     for stream in listener.incoming() {
@@ -27,12 +60,13 @@ fn main() {
             let request_header = read_stream(&stream);
             match request_header {
                 None => {}
-                Some(y) => { create_resp(y.clone(), &mut stream); }
+                Some(y) => {
+                    create_resp(y.clone(), &mut stream);
+                }
             }
         });
     }
 }
-
 
 fn create_list_dir_resp(current_path: String, stream: &mut TcpStream) {
     let status_line = "HTTP/1.1 200 OK";
@@ -70,7 +104,9 @@ fn match_url_path(http_header: &str) -> Option<String> {
 
     if let Some(mat) = result.next() {
         mat.get(1).map_or(None, |m| Some(m.as_str().to_string()))
-    } else { None }
+    } else {
+        None
+    }
 }
 
 fn create_resp(request_line: String, stream: &mut TcpStream) {
@@ -104,9 +140,10 @@ fn create_resp(request_line: String, stream: &mut TcpStream) {
 
 fn read_stream(stream: &TcpStream) -> Option<String> {
     let buf = BufReader::new(stream);
-    let http_req: Vec<String> = buf.lines()
-        .map(|line| { line.unwrap() })
-        .take_while(|line| { !line.is_empty() })
+    let http_req: Vec<String> = buf
+        .lines()
+        .map(|line| line.unwrap())
+        .take_while(|line| !line.is_empty())
         .collect();
 
     let line: Option<&String> = http_req.iter().next();
@@ -123,13 +160,28 @@ fn get_current_directory(current_path: &String) -> Vec<DirEntry> {
 }
 
 fn download_file_response(filepath: &String, stream: &mut TcpStream) {
-    let file = File::open(Path::new(filepath));
+    let path = Path::new(filepath);
+    let file = File::open(path);
     match file {
         Ok(mut x) => {
             let status_line = "HTTP/1.1 200 OK";
-            let filename = Path::new(filepath).file_name().unwrap().to_str().unwrap();
+            let filename = path.file_name().unwrap().to_str().unwrap();
+            let file_type = path.extension();
+            let content_type;
+            match file_type {
+                Some(x) => {
+                    match EXT_CONTENT_TYPE.get(x.to_str().unwrap()) {
+                        Some(x) => {content_type = *x;},
+                        None => {content_type = "application/octet-stream";},
+                    }
+                },
+                None => {
+                    content_type = "application/octet-stream";
+                },
+            }
+            
             let length = x.metadata().unwrap().len();
-            let response_headers = format!("{status_line}\r\nContent-type: application/octet-stream\r\nContent-Disposition: attachment; filename={filename}\r\nContent-Length: {length}\r\n\r\n");
+            let response_headers = format!("{status_line}\r\nContent-type: {content_type}\r\nContent-Disposition: attachment; filename={filename}\r\nContent-Length: {length}\r\n\r\n");
             let _ = stream.write(response_headers.as_bytes()).unwrap();
 
             let mut buffer = [0u8; 1024];
@@ -138,7 +190,7 @@ fn download_file_response(filepath: &String, stream: &mut TcpStream) {
                     break;
                 }
                 let _ = stream.write(buffer.as_ref());
-            };
+            }
         }
         Err(_) => {
             let status_line = "HTTP/1.1 404 Not Found";
@@ -168,7 +220,7 @@ mod tests {
                         break;
                     }
                     let _ = new_file.write(buffer.as_ref());
-                };
+                }
             }
             Err(_) => {
                 let status_line = "HTTP/1.1 404 Not Found";
@@ -189,7 +241,9 @@ mod tests {
         let data = match_url_path(string);
         match data {
             None => {}
-            Some(x) => { println!("{}", x); }
+            Some(x) => {
+                println!("{}", x);
+            }
         }
     }
 }
